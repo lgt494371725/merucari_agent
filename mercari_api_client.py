@@ -1,11 +1,16 @@
 import asyncio
+import base64
 import json
 import re
+import time
 import uuid
 from typing import Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 SEARCH_API = "https://api.mercari.jp/v2/entities:search"
 ITEM_API = "https://api.mercari.jp/items/get"
@@ -29,13 +34,86 @@ def _clean(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _to_int(value) -> int:
+    """Coerce Mercari's price fields (sometimes int, sometimes str) to int."""
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(str(value).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return 0
+
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+class _DpopSigner:
+    """Generates DPoP JWT tokens required by Mercari JP's API."""
+
+    def __init__(self) -> None:
+        self._key = ec.generate_private_key(ec.SECP256R1())
+        nums = self._key.public_key().public_numbers()
+        self._jwk = {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": _b64url(nums.x.to_bytes(32, "big")),
+            "y": _b64url(nums.y.to_bytes(32, "big")),
+        }
+        self._pem = self._key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+
+    def token(self, url: str, method: str) -> str:
+        # htu must not include query string per DPoP spec
+        parts = urlsplit(url)
+        htu = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        payload = {
+            "iat": int(time.time()),
+            "jti": str(uuid.uuid4()),
+            "htu": htu,
+            "htm": method.upper(),
+            "uuid": str(uuid.uuid4()),
+        }
+        return jwt.encode(
+            payload,
+            self._pem,
+            algorithm="ES256",
+            headers={"typ": "dpop+jwt", "alg": "ES256", "jwk": self._jwk},
+        )
+
+
 class MercariApiClient:
     def __init__(self, timeout: float = 15.0, max_concurrent: int = 8) -> None:
         self.timeout = timeout
         self.max_concurrent = max_concurrent
+        self._dpop = _DpopSigner()
+
+    def _api_headers(self, url: str, method: str) -> Dict[str, str]:
+        return {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "X-Platform": "web",
+            "DPoP": self._dpop.token(url, method),
+            "Origin": "https://jp.mercari.com",
+            "Referer": "https://jp.mercari.com/",
+        }
 
     def fetch_items(self, keyword: str, top_n: int = 10) -> List[Dict[str, str]]:
         return asyncio.run(self._run(keyword, top_n))
+
+    def search_titles(self, keyword: str, top_n: int = 10) -> List[Dict[str, str]]:
+        """Fast: returns [{'id', 'title'}] from the search API only (no detail fetches)."""
+        return asyncio.run(self._search_titles(keyword, top_n))
+
+    def fetch_details_for_ids(self, item_ids: List[str]) -> List[Dict[str, str]]:
+        """Fetch full title+description for the given IDs concurrently."""
+        return asyncio.run(self._details_for_ids(item_ids))
 
     async def _run(self, keyword: str, top_n: int) -> List[Dict[str, str]]:
         async with httpx.AsyncClient(
@@ -48,6 +126,43 @@ class MercariApiClient:
                 return []
             return await self._fetch_all_details(client, item_ids)
 
+    async def _search_titles(self, keyword: str, top_n: int) -> List[Dict[str, str]]:
+        """Search the API and return titles only. Raises on API failure (caller
+        shows the error) — silent HTML fallback is gone because Mercari JP is
+        fully client-side rendered and would just hang/return nothing."""
+        async with httpx.AsyncClient(
+            headers=_BASE_HEADERS,
+            timeout=self.timeout,
+            follow_redirects=True,
+        ) as client:
+            payload = self._build_search_payload(keyword, top_n)
+            resp = await client.post(
+                SEARCH_API,
+                json=payload,
+                headers=self._api_headers(SEARCH_API, "POST"),
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return [
+                {
+                    "id": it.get("id", ""),
+                    "title": _clean(it.get("name", "")),
+                    "price": _to_int(it.get("price")),
+                }
+                for it in items
+                if it.get("id")
+            ][:top_n]
+
+    async def _details_for_ids(self, item_ids: List[str]) -> List[Dict[str, str]]:
+        if not item_ids:
+            return []
+        async with httpx.AsyncClient(
+            headers=_BASE_HEADERS,
+            timeout=self.timeout,
+            follow_redirects=True,
+        ) as client:
+            return await self._fetch_all_details(client, item_ids)
+
     # ── Search ──────────────────────────────────────────────────────────────
 
     async def _search(
@@ -58,10 +173,8 @@ class MercariApiClient:
             return ids
         return await self._search_via_html(client, keyword, top_n)
 
-    async def _search_via_api(
-        self, client: httpx.AsyncClient, keyword: str, top_n: int
-    ) -> List[str]:
-        payload = {
+    def _build_search_payload(self, keyword: str, top_n: int) -> Dict:
+        return {
             "searchSessionId": str(uuid.uuid4()),
             "indexRouting": "INDEX_ROUTING_UNSPECIFIED",
             "thumbnailTypes": [],
@@ -98,15 +211,16 @@ class MercariApiClient:
             "withItemSizes": False,
             "useDynamicAttribute": False,
         }
+
+    async def _search_via_api(
+        self, client: httpx.AsyncClient, keyword: str, top_n: int
+    ) -> List[str]:
+        payload = self._build_search_payload(keyword, top_n)
         try:
             resp = await client.post(
                 SEARCH_API,
                 json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/plain, */*",
-                    "X-Platform": "web",
-                },
+                headers=self._api_headers(SEARCH_API, "POST"),
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -199,14 +313,21 @@ class MercariApiClient:
             resp = await client.get(
                 ITEM_API,
                 params={"id": item_id},
-                headers={"Accept": "application/json", "X-Platform": "web"},
+                headers=self._api_headers(ITEM_API, "GET"),
             )
             if resp.status_code == 200:
-                data = resp.json()
+                body = resp.json()
+                data = body.get("data") if isinstance(body.get("data"), dict) else body
                 title = _clean(data.get("name", ""))
                 description = _clean(data.get("description", ""))
+                price = _to_int(data.get("price"))
                 if title or description:
-                    return {"url": url, "title": title, "description": description}
+                    return {
+                        "url": url,
+                        "title": title,
+                        "description": description,
+                        "price": price,
+                    }
         except Exception:
             pass
         return None
