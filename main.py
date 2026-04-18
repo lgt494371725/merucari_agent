@@ -3,6 +3,7 @@ import sys
 import time
 from typing import Dict, List
 
+from mercari_api_client import MercariApiClient
 from mercari_scraper import MercariScraper
 from scoring import score_items
 
@@ -34,13 +35,19 @@ def parse_args() -> argparse.Namespace:
         "--headless",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Run browser in headless mode (default: true).",
+        help="Run browser in headless mode (default: true). Only used when --use-browser is set.",
     )
     parser.add_argument(
         "--timeout-ms",
         type=int,
         default=20000,
-        help="Browser timeout in milliseconds (default: 20000).",
+        help="Timeout in milliseconds (default: 20000).",
+    )
+    parser.add_argument(
+        "--use-browser",
+        action="store_true",
+        default=False,
+        help="Use browser-based scraper instead of direct API client.",
     )
     return parser.parse_args()
 
@@ -76,14 +83,17 @@ def main() -> int:
     args = parse_args()
     top_n = max(1, args.top_n)
 
-    scraper = MercariScraper(headless=args.headless, timeout_ms=args.timeout_ms)
+    fetch_start = time.perf_counter()
     try:
-        fetch_start = time.perf_counter()
-        items = scraper.fetch_items(keyword=args.keyword, top_n=top_n)
-        fetch_elapsed = time.perf_counter() - fetch_start
+        if args.use_browser:
+            client = MercariScraper(headless=args.headless, timeout_ms=args.timeout_ms)
+        else:
+            client = MercariApiClient(timeout=args.timeout_ms / 1000)
+        items = client.fetch_items(keyword=args.keyword, top_n=top_n)
     except Exception as exc:
         print(f"Failed to fetch Mercari items: {exc}", file=sys.stderr)
         return 1
+    fetch_elapsed = time.perf_counter() - fetch_start
 
     if not items:
         print("No items found.")
