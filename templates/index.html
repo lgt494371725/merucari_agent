@@ -52,13 +52,31 @@ function formatPrice(value) {
   return `¥${n.toLocaleString()}`;
 }
 
-// ── Placeholder image (real backend has no category field — generic icon) ──
-function PlaceholderImg({ size = 56 }) {
-  return (
-    <div style={{ width:size, height:size, minWidth:size, background:"#ede9e5", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, userSelect:"none" }}>
-      🛍
-    </div>
-  );
+// ── Thumbnail (Mercari image when available, fallback to icon) ─────────────
+function PlaceholderImg({ size = 56, src }) {
+  const [failed, setFailed] = useState(false);
+  const base = {
+    width:size, height:size, minWidth:size,
+    background:"#ede9e5", borderRadius:8,
+    display:"flex", alignItems:"center", justifyContent:"center",
+    fontSize:size*0.45, userSelect:"none",
+    overflow:"hidden",
+  };
+  if (src && !failed) {
+    return (
+      <div style={base}>
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+          style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}
+        />
+      </div>
+    );
+  }
+  return <div style={base}>🛍</div>;
 }
 
 // ── Result Row (list layout) ───────────────────────────────────────────────
@@ -72,7 +90,7 @@ function ResultRow({ item, selected, focused, onSelect, onDoubleClick, density, 
       onDoubleClick={onDoubleClick}
       style={{ padding:pad, display:"flex", gap:12, alignItems:"center", background:bg, border, borderRadius:8, margin:"2px 4px", cursor:"pointer", transition:"background 0.12s" }}
     >
-      {showImg && <PlaceholderImg size={density==="compact"?40:52} />}
+      {showImg && <PlaceholderImg size={density==="compact"?40:52} src={item.thumbnail} />}
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:14, fontWeight:500, color:"#1a1714", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
           {item.title || "(no title)"}
@@ -95,7 +113,7 @@ function ResultCard({ item, selected, focused, onSelect, onDoubleClick, accent }
   return (
     <div onClick={onSelect} onDoubleClick={onDoubleClick}
       style={{ background:bg, borderRadius:10, boxShadow:shadow, padding:"12px", cursor:"pointer", transition:"box-shadow 0.12s, background 0.12s", display:"flex", flexDirection:"column", gap:8 }}>
-      <PlaceholderImg size={80} />
+      <PlaceholderImg size={80} src={item.thumbnail} />
       <div style={{ fontSize:13, fontWeight:500, color:"#1a1714", lineHeight:1.35, WebkitLineClamp:2, overflow:"hidden", display:"-webkit-box", WebkitBoxOrient:"vertical" }}>{item.title}</div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontSize:15, fontWeight:600, color:accent }}>{formatPrice(item.price)}</span>
@@ -124,7 +142,7 @@ function DetailsPanel({ items, loading, accent }) {
     return (
       <div style={{ padding:"20px 24px", overflowY:"auto", height:"100%" }}>
         <div style={{ display:"flex", gap:16, alignItems:"flex-start", marginBottom:20 }}>
-          <PlaceholderImg size={80} />
+          <PlaceholderImg size={120} src={it.thumbnail} />
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:18, fontWeight:600, lineHeight:1.3, marginBottom:6, wordBreak:"break-word" }}>{it.title || "(no title)"}</div>
             <div style={{ fontSize:24, fontWeight:700, color:accent }}>{formatPrice(it.price)}</div>
@@ -164,7 +182,7 @@ function DetailsPanel({ items, loading, accent }) {
       </div>
       {items.map(it=>(
         <div key={it.id} style={{ display:"flex", gap:10, padding:"10px 0", borderBottom:"1px solid #f0ece8", alignItems:"center" }}>
-          <PlaceholderImg size={36} />
+          <PlaceholderImg size={36} src={it.thumbnail} />
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:13, fontWeight:500, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{it.title || "(no title)"}</div>
             {it.url && <a href={it.url} target="_blank" rel="noreferrer noopener" style={{ fontSize:11, color:"#888" }}>Open ↗</a>}
@@ -251,8 +269,14 @@ function App() {
       })
       .then(items => {
         if (detailReqRef.current !== reqId) return; // stale
-        setDetailItems(items);
-        setStatus(`✓ Loaded details for ${items.length} item(s)`);
+        // backfill thumbnails from the search results when missing
+        const byId = new Map(results.map(r => [r.id, r]));
+        const merged = items.map(it => ({
+          ...it,
+          thumbnail: it.thumbnail || (byId.get(it.id) && byId.get(it.id).thumbnail) || "",
+        }));
+        setDetailItems(merged);
+        setStatus(`✓ Loaded details for ${merged.length} item(s)`);
       })
       .catch(err => {
         if (detailReqRef.current !== reqId) return;

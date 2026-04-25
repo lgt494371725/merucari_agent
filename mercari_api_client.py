@@ -34,6 +34,48 @@ def _clean(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _clean_multiline(value: Optional[str]) -> str:
+    """Like `_clean` but preserves line breaks. Collapses runs of horizontal
+    whitespace within a line, normalises CRLF/CR to LF, and trims at most one
+    leading/trailing blank line."""
+    if not value:
+        return ""
+    # Normalise newlines
+    s = value.replace("\r\n", "\n").replace("\r", "\n")
+    # Collapse 3+ blank lines to 2 (preserve paragraph breaks)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    # Collapse runs of spaces/tabs within a line
+    s = re.sub(r"[ \t]+", " ", s)
+    # Strip trailing spaces on each line + outer whitespace
+    s = "\n".join(line.rstrip() for line in s.split("\n"))
+    return s.strip()
+
+
+def _first_thumbnail(item: Dict) -> str:
+    """Best-effort extraction of a thumbnail URL from a Mercari item dict.
+    Mercari sometimes returns `thumbnails: [url, ...]`, sometimes `thumbnail`,
+    sometimes `photos: [url, ...]`."""
+    if not isinstance(item, dict):
+        return ""
+    for key in ("thumbnails", "photos"):
+        v = item.get(key)
+        if isinstance(v, list) and v:
+            first = v[0]
+            if isinstance(first, str) and first:
+                return first
+            if isinstance(first, dict):
+                # e.g. {"url": "..."} or {"src": "..."}
+                for sub in ("url", "src", "uri"):
+                    s = first.get(sub)
+                    if isinstance(s, str) and s:
+                        return s
+    for key in ("thumbnail", "photo", "imageUrl", "image"):
+        v = item.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return ""
+
+
 def _to_int(value) -> int:
     """Coerce Mercari's price fields (sometimes int, sometimes str) to int."""
     if value is None or value == "":
@@ -148,6 +190,7 @@ class MercariApiClient:
                     "id": it.get("id", ""),
                     "title": _clean(it.get("name", "")),
                     "price": _to_int(it.get("price")),
+                    "thumbnail": _first_thumbnail(it),
                 }
                 for it in items
                 if it.get("id")
@@ -319,14 +362,16 @@ class MercariApiClient:
                 body = resp.json()
                 data = body.get("data") if isinstance(body.get("data"), dict) else body
                 title = _clean(data.get("name", ""))
-                description = _clean(data.get("description", ""))
+                description = _clean_multiline(data.get("description", ""))
                 price = _to_int(data.get("price"))
                 if title or description:
                     return {
+                        "id": item_id,
                         "url": url,
                         "title": title,
                         "description": description,
                         "price": price,
+                        "thumbnail": _first_thumbnail(data),
                     }
         except Exception:
             pass
@@ -342,7 +387,7 @@ class MercariApiClient:
             description = self._description_from_html(html)
             if not title and not description:
                 return None
-            return {"url": url, "title": title, "description": description}
+            return {"id": item_id, "url": url, "title": title, "description": description}
         except Exception:
             return None
 
@@ -360,7 +405,7 @@ class MercariApiClient:
     def _description_from_html(self, html: str) -> str:
         nd = self._next_data_item(html)
         if nd:
-            desc = _clean(nd.get("description", ""))
+            desc = _clean_multiline(nd.get("description", ""))
             if desc:
                 return desc
         for raw in re.findall(
@@ -370,7 +415,7 @@ class MercariApiClient:
         ):
             try:
                 data = json.loads(raw.strip())
-                desc = _clean(data.get("description", ""))
+                desc = _clean_multiline(data.get("description", ""))
                 if desc:
                     return desc
             except Exception:
@@ -380,7 +425,7 @@ class MercariApiClient:
             html,
             re.IGNORECASE,
         )
-        return _clean(m.group(1)) if m else ""
+        return _clean_multiline(m.group(1)) if m else ""
 
     def _next_data_item(self, html: str) -> Optional[Dict]:
         match = re.search(
