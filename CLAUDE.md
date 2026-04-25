@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`merucari_agent` is a Python tool that queries Japan's Mercari marketplace. Two entry points:
+`merucari_agent` is a Python tool that queries Japan's Mercari marketplace. Three entry points:
 - **`gui.py`** — interactive Tk GUI: enter keyword → pick from a list of titles → view full details for selected items
+- **`webapp.py`** — Flask web UI (same flow, browser-based; design from Claude Design handoff). Template at `templates/index.html`. Endpoints: `GET /api/search?keyword=&top_n=`, `GET /api/details?ids=a,b,c`.
 - **`main.py`** — CLI that auto-picks the single best match using `scoring.py`
 
 ## Running
@@ -17,6 +18,9 @@ playwright install chromium  # only needed for --use-browser fallback
 
 # Interactive GUI (tkinter, bundled with Python)
 python gui.py
+
+# Web UI (Flask) — open http://127.0.0.1:5000
+python webapp.py
 
 # CLI: auto-score + print best match
 python main.py --keyword "Nintendo Switch" [--top-n 10] [--timeout-ms 20000]
