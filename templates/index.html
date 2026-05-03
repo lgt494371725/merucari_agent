@@ -123,7 +123,7 @@ function ResultCard({ item, selected, focused, onSelect, onDoubleClick, accent }
 }
 
 // ── Details Panel ──────────────────────────────────────────────────────────
-function DetailsPanel({ items, loading, accent }) {
+function DetailsPanel({ items, loading, accent, onCopy }) {
   if (loading) return (
     <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:10, color:accent }}>
       <div style={{ width:18, height:18, border:`2px solid ${accentAlpha(accent,0.2)}`, borderTopColor:accent, borderRadius:"50%", animation:"spin 0.7s linear infinite" }}></div>
@@ -146,6 +146,14 @@ function DetailsPanel({ items, loading, accent }) {
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontSize:18, fontWeight:600, lineHeight:1.3, marginBottom:6, wordBreak:"break-word" }}>{it.title || "(no title)"}</div>
             <div style={{ fontSize:24, fontWeight:700, color:accent }}>{formatPrice(it.price)}</div>
+            <div style={{ marginTop:10 }}>
+              <button
+                onClick={() => onCopy(it)}
+                style={{ height:32, padding:"0 12px", background:accent, color:"#fff", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+              >
+                Copy to Draft
+              </button>
+            </div>
           </div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:"10px 20px", marginBottom:16 }}>
@@ -194,6 +202,184 @@ function DetailsPanel({ items, loading, accent }) {
   );
 }
 
+function DraftPanel({ draft, setDraft, accent }) {
+  const update = (key, value) => setDraft(prev => ({ ...(prev || {}), [key]: value }));
+  const [saveHint, setSaveHint] = useState("");
+  const [autoFillHint, setAutoFillHint] = useState("");
+  const [cdpUrl, setCdpUrl] = useState("http://127.0.0.1:9222");
+
+  const saveDraftForAutomation = async () => {
+    if (!draft) return;
+    try {
+      const resp = await fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      setSaveHint("草稿已保存，可运行 Playwright 自动填表脚本。");
+    } catch (err) {
+      setSaveHint(`保存失败: ${err.message}`);
+    }
+  };
+
+  const runAutoFill = async () => {
+    try {
+      const resp = await fetch("/api/auto-fill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cdpUrl: cdpUrl.trim() }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      setAutoFillHint(`已启动自动填表。日志文件: ${body.logFile || "logs/autofill.log"}`);
+    } catch (err) {
+      setAutoFillHint(`启动失败: ${err.message}`);
+    }
+  };
+
+  if (!draft) {
+    return (
+      <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:10, color:"#bbb", padding:"20px" }}>
+        <div style={{ fontSize:30 }}>📝</div>
+        <div style={{ fontSize:14, fontWeight:500 }}>No draft yet</div>
+        <div style={{ fontSize:12 }}>Open one item detail and click "Copy to Draft".</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding:"16px", overflowY:"auto", height:"100%" }}>
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>商品名</div>
+      <input
+        value={draft.title || ""}
+        maxLength={40}
+        onChange={e => update("title", e.target.value)}
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:14, fontFamily:"inherit" }}
+      />
+      <div style={{ fontSize:11, color:"#aaa", textAlign:"right", marginTop:"-8px", marginBottom:"10px" }}>{(draft.title || "").length}/40</div>
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>カテゴリー</div>
+      <input
+        value={draft.category || ""}
+        onChange={e => update("category", e.target.value)}
+        placeholder="例: おもちゃ・ホビー・グッズ > キャラクターグッズ"
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit" }}
+      />
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>商品の状態</div>
+      <select
+        value={draft.condition || "未設定"}
+        onChange={e => update("condition", e.target.value)}
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit", background:"#fff" }}
+      >
+        <option>未設定</option>
+        <option>新品、未使用</option>
+        <option>未使用に近い</option>
+        <option>目立った傷や汚れなし</option>
+        <option>やや傷や汚れあり</option>
+        <option>傷や汚れあり</option>
+        <option>全体的に状態が悪い</option>
+      </select>
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>商品の説明</div>
+      <textarea
+        value={draft.description || ""}
+        maxLength={1000}
+        onChange={e => update("description", e.target.value)}
+        style={{ width:"100%", minHeight:180, marginBottom:12, padding:"10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:14, lineHeight:1.5, fontFamily:"inherit", resize:"vertical" }}
+      />
+      <div style={{ fontSize:11, color:"#aaa", textAlign:"right", marginTop:"-8px", marginBottom:"10px" }}>{(draft.description || "").length}/1000</div>
+
+      <div style={{ fontSize:14, fontWeight:600, color:"#666", margin:"8px 0 10px" }}>配送について</div>
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>配送料の負担</div>
+      <select
+        value={draft.shippingPayer || "送料込み(出品者負担)"}
+        onChange={e => update("shippingPayer", e.target.value)}
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit", background:"#fff" }}
+      >
+        <option>送料込み(出品者負担)</option>
+        <option>着払い(購入者負担)</option>
+      </select>
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>配送の方法</div>
+      <input
+        value={draft.shippingMethod || ""}
+        onChange={e => update("shippingMethod", e.target.value)}
+        placeholder="例: らくらくメルカリ便"
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit" }}
+      />
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>発送元の地域</div>
+      <input
+        value={draft.shippingFrom || ""}
+        onChange={e => update("shippingFrom", e.target.value)}
+        placeholder="例: 東京都"
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit" }}
+      />
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>発送までの日数</div>
+      <select
+        value={draft.shippingDays || "2~3日で発送"}
+        onChange={e => update("shippingDays", e.target.value)}
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit", background:"#fff" }}
+      >
+        <option>1~2日で発送</option>
+        <option>2~3日で発送</option>
+        <option>4~7日で発送</option>
+      </select>
+
+      <div style={{ fontSize:14, fontWeight:600, color:"#666", margin:"8px 0 10px" }}>販売タイプ</div>
+      <select
+        value={draft.saleType || "価格を設定する"}
+        onChange={e => update("saleType", e.target.value)}
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit", background:"#fff" }}
+      >
+        <option>価格を設定する</option>
+        <option>オークション形式</option>
+      </select>
+
+      <div style={{ fontSize:12, color:"#999", marginBottom:6 }}>販売価格</div>
+      <input
+        value={draft.price ?? ""}
+        onChange={e => update("price", e.target.value)}
+        placeholder="例: 300"
+        style={{ width:"100%", height:34, marginBottom:12, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:14, fontFamily:"inherit" }}
+      />
+      <button
+        onClick={saveDraftForAutomation}
+        style={{ width:"100%", height:36, background:"#fff", color:accent, border:`1px solid ${accent}`, borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit", marginTop:4 }}
+      >
+        保存草稿（自动出品用）
+      </button>
+      {saveHint && <div style={{ marginTop:8, fontSize:12, color:"#666" }}>{saveHint}</div>}
+      <div style={{ fontSize:12, color:"#999", marginTop:10, marginBottom:6 }}>现有浏览器 CDP 地址</div>
+      <input
+        value={cdpUrl}
+        onChange={e => setCdpUrl(e.target.value)}
+        placeholder="http://127.0.0.1:9222"
+        style={{ width:"100%", height:34, marginBottom:8, padding:"0 10px", border:"1px solid #e0dbd6", borderRadius:8, fontSize:13, fontFamily:"inherit" }}
+      />
+      <button
+        onClick={runAutoFill}
+        style={{ width:"100%", height:36, background:"#fff", color:"#333", border:"1px solid #d0ccc8", borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit", marginTop:8 }}
+      >
+        运行自动填表（连接现有浏览器）
+      </button>
+      {autoFillHint && <div style={{ marginTop:8, fontSize:12, color:"#666" }}>{autoFillHint}</div>}
+      <div style={{ marginTop:10, fontSize:12, color:"#888" }}>
+        注意: 浏览器安全限制下，无法从本页面直接跨站自动填写 Mercari 表单。
+      </div>
+      <div style={{ marginTop:6, fontSize:12, color:"#888" }}>
+        草稿保存在当前 webapp 进程内存中，重启 `python webapp.py` 后会清空。
+      </div>
+      <div style={{ marginTop:6, fontSize:12, color:accent }}>Draft is kept while you browse other items.</div>
+    </div>
+  );
+}
+
 // ── Main App ───────────────────────────────────────────────────────────────
 function App() {
   const accent  = ACCENT;
@@ -209,10 +395,15 @@ function App() {
   const [focused, setFocused] = useState(null);
   const [status, setStatus] = useState("Ready");
   const [searching, setSearching] = useState(false);
-  const [detailsVisible, setDetailsVisible] = useState(true);
+  const [detailsVisible, setDetailsVisible] = useState(false);
+  const [draftVisible, setDraftVisible] = useState(false);
+  const [mainSplitRatio, setMainSplitRatio] = useState(splitRatio);
+  const [sideSplitRatio, setSideSplitRatio] = useState(50); // details width % when both visible
   const [detailItems, setDetailItems] = useState([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [draftItem, setDraftItem] = useState(null);
   const detailReqRef = useRef(0);
+  const dragRef = useRef(null);
 
   const search = useCallback(async () => {
     const kw = keyword.trim();
@@ -288,6 +479,53 @@ function App() {
       });
   }, [selected, results]);
 
+  const copyToDraft = useCallback((item) => {
+    setDraftItem({
+      id: item.id || "",
+      title: item.title || "",
+      category: "",
+      condition: "未設定",
+      description: item.description || "",
+      url: item.url || "",
+      price: item.price ?? "",
+      thumbnail: item.thumbnail || "",
+      shippingPayer: "送料込み(出品者負担)",
+      shippingMethod: "らくらくメルカリ便",
+      shippingFrom: "東京都",
+      shippingDays: "2~3日で発送",
+      saleType: "価格を設定する",
+    });
+    setDraftVisible(true);
+    setStatus(`Copied ${item.id || "item"} to draft`);
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragRef.current) return;
+      const mode = dragRef.current.mode;
+      if (mode === "main") {
+        const ratio = (e.clientX / window.innerWidth) * 100;
+        setMainSplitRatio(Math.max(25, Math.min(75, ratio)));
+      } else if (mode === "side") {
+        const { left, width } = dragRef.current.rect;
+        if (!width) return;
+        const ratio = ((e.clientX - left) / width) * 100;
+        setSideSplitRatio(Math.max(20, Math.min(80, ratio)));
+      }
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:"#f7f5f3" }}>
       {/* Header */}
@@ -329,12 +567,18 @@ function App() {
         >
           {detailsVisible ? "Hide Details" : "Show Details"}
         </button>
+        <button
+          onClick={()=>setDraftVisible(v=>!v)}
+          style={{ height:34, padding:"0 14px", background:draftVisible?accentAlpha(accent,0.1):"transparent", color:draftVisible?accent:"#888", border:`1.5px solid ${draftVisible?accentAlpha(accent,0.3):"#e0dbd6"}`, borderRadius:8, fontSize:13, fontWeight:500, cursor:"pointer", flexShrink:0, fontFamily:"inherit", transition:"all 0.15s" }}
+        >
+          {draftVisible ? "Hide Draft" : "Show Draft"}
+        </button>
       </div>
 
       {/* Main content */}
       <div style={{ flex:1, display:"flex", minHeight:0 }}>
         {/* Results panel */}
-        <div style={{ width: detailsVisible ? `${splitRatio}%` : "100%", display:"flex", flexDirection:"column", minHeight:0, transition:"width 0.25s" }}>
+        <div style={{ width: (detailsVisible || draftVisible) ? `${mainSplitRatio}%` : "100%", display:"flex", flexDirection:"column", minHeight:0 }}>
           <div style={{ padding:"8px 16px 6px", fontSize:12, color:"#aaa", borderBottom:"1px solid #f0ece8", background:"#faf9f7", flexShrink:0 }}>
             Results — <strong>double-click</strong> = quick details · <strong>Ctrl/Shift+click</strong> = multi-select
             {results.length > 0 && <span style={{ float:"right", color:accent, fontWeight:600 }}>{results.length} items</span>}
@@ -375,18 +619,66 @@ function App() {
         </div>
 
         {/* Divider */}
-        {detailsVisible && <div style={{ width:1, background:"#e8e4e0", flexShrink:0 }} />}
+        {(detailsVisible || draftVisible) && (
+          <div
+            onMouseDown={() => {
+              dragRef.current = { mode: "main" };
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
+            }}
+            style={{ width:6, background:"#e8e4e0", flexShrink:0, cursor:"col-resize" }}
+          />
+        )}
 
-        {/* Details panel */}
-        {detailsVisible && (
-          <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0, background:"#fff" }}>
-            <div style={{ padding:"8px 16px 6px", fontSize:12, color:"#aaa", borderBottom:"1px solid #f0ece8", background:"#faf9f7", flexShrink:0 }}>
-              Details
-              {detailItems.length > 1 && <span style={{ marginLeft:8, color:accent, fontWeight:600 }}>{detailItems.length} selected</span>}
+        {/* Details / Draft panels */}
+        {(detailsVisible || draftVisible) && (
+          <div style={{ flex:1, display:"flex", minHeight:0, background:"#fff" }}>
+            {detailsVisible && (
+            <div style={{ width:(detailsVisible && draftVisible) ? `${sideSplitRatio}%` : "100%", display:"flex", flexDirection:"column", minHeight:0 }}>
+              <div style={{ padding:"8px 16px 6px", fontSize:12, color:"#aaa", borderBottom:"1px solid #f0ece8", background:"#faf9f7", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div>
+                  Details
+                  {detailItems.length > 1 && <span style={{ marginLeft:8, color:accent, fontWeight:600 }}>{detailItems.length} selected</span>}
+                </div>
+                <button
+                  onClick={() => setDetailsVisible(false)}
+                  style={{ border:"none", background:"transparent", color:"#888", cursor:"pointer", fontSize:12 }}
+                >
+                  Collapse
+                </button>
+              </div>
+              <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
+                <DetailsPanel items={detailItems} loading={detailsLoading} accent={accent} onCopy={copyToDraft} />
+              </div>
             </div>
-            <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
-              <DetailsPanel items={detailItems} loading={detailsLoading} accent={accent} />
+            )}
+            {(detailsVisible && draftVisible) && (
+              <div
+                onMouseDown={(e) => {
+                  const parentRect = e.currentTarget.parentElement.getBoundingClientRect();
+                  dragRef.current = { mode: "side", rect: parentRect };
+                  document.body.style.cursor = "col-resize";
+                  document.body.style.userSelect = "none";
+                }}
+                style={{ width:6, background:"#f0ece8", flexShrink:0, cursor:"col-resize" }}
+              />
+            )}
+            {draftVisible && (
+            <div style={{ width:(detailsVisible && draftVisible) ? `${100 - sideSplitRatio}%` : "100%", display:"flex", flexDirection:"column", minHeight:0 }}>
+              <div style={{ padding:"8px 16px 6px", fontSize:12, color:"#aaa", borderBottom:"1px solid #f0ece8", background:"#faf9f7", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                Draft Listing
+                <button
+                  onClick={() => setDraftVisible(false)}
+                  style={{ border:"none", background:"transparent", color:"#888", cursor:"pointer", fontSize:12 }}
+                >
+                  Collapse
+                </button>
+              </div>
+              <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
+                <DraftPanel draft={draftItem} setDraft={setDraftItem} accent={accent} />
+              </div>
             </div>
+            )}
           </div>
         )}
       </div>
