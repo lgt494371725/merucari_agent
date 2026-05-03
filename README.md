@@ -2,63 +2,36 @@
 
 ## Project Overview
 
-`merucari_agent` is a Python tool that queries Japan's Mercari marketplace. Three entry points:
-- **`gui.py`** - interactive Tk GUI: enter keyword -> pick from a list of titles -> view full details for selected items
-- **`webapp.py`** - Flask web UI (same flow, browser-based). Template at `templates/index.html`. Endpoints: `GET /api/search?keyword=&top_n=`, `GET /api/details?ids=a,b,c`
-- **`main.py`** - CLI that auto-picks the single best match using `scoring.py`
+`merucari_agent` is a Python toolkit for querying Japan's Mercari marketplace.
+
+Current modules:
+- `mercari_api_client.py`: primary fetch client (search, top N, details)
+- `mercari_scraper.py`: Playwright-based browser fallback scraper
+- `scoring.py`: keyword/description scoring logic
+- `webapp.py`: Flask endpoints for search/details
 
 ## Running
 
 ```bash
 # Install dependencies
 pip install -r requirements.txt
-playwright install chromium  # only needed for --use-browser fallback
+playwright install chromium
 
-# Interactive GUI (tkinter, bundled with Python)
-python gui.py
-
-# Web UI (Flask) - open http://127.0.0.1:5000
+# Web API/UI
 python webapp.py
+# open http://127.0.0.1:5000
 
-# CLI: auto-score + print best match
-python main.py --keyword "Nintendo Switch" [--top-n 10] [--timeout-ms 20000]
-
-# CLI: force Playwright browser (legacy)
-python main.py --keyword "Nintendo Switch" --use-browser [--headless]
-
-# Tests (stdlib unittest, no extra deps)
+# Tests
 python -m unittest discover -s tests -v
 ```
 
-No build step, no linter configured.
-
-## Architecture
-
-Three-stage pipeline:
-
-**1. Fetching** - `mercari_api_client.py` (`MercariApiClient`) is the default; `mercari_scraper.py` (`MercariScraper`) is the Playwright fallback (`--use-browser`)
+## Core API
 
 `MercariApiClient` public methods:
-- `search_titles(keyword, top_n)` -> `[{id, title}]` - one API call, no detail fetches (used by GUI/Web for the first step)
-- `fetch_details_for_ids(ids)` -> `[{id, title, description, url}]` - concurrent detail fetches (used by GUI/Web after selection)
-- `fetch_items(keyword, top_n)` -> search + all details in one go (used by CLI)
+- `search_titles(keyword, top_n)` -> `[{id, title, price, thumbnail}]`
+- `fetch_details_for_ids(ids)` -> `[{id, title, description, url, price, thumbnail}]`
+- `fetch_items(keyword, top_n)` -> search + all details in one go
 
-Under the hood:
-- Search: `POST api.mercari.jp/v2/entities:search` (falls back to HTML `__NEXT_DATA__` / regex hrefs)
-- Details: `GET api.mercari.jp/items/get?id=` (falls back to item page HTML parsing)
-- Concurrency: `asyncio` + `httpx.AsyncClient`, semaphore-limited to `max_concurrent` (default 8)
-
-**2. Scoring** - `scoring.py` (`score_items`), used by the CLI
-- `final_score = 0.6 * length_score + 0.4 * coverage_score`; sub-30-char descriptions are penalized
-
-**3. Presentation**
-- `gui.py` - Tk window (listbox + multi-select + details pane). Background fetches run on a thread; results are marshalled back with `root.after(0, ...)` to stay on the Tk thread
-- `webapp.py` - Flask app exposing search/detail APIs and serving `templates/index.html`
-- `main.py` - CLI summary table + best item
-
-## Key Implementation Details
-
-- **DPoP authentication is mandatory** for `api.mercari.jp`. `_DpopSigner` generates an ES256-signed JWT per request (ephemeral P-256 key, `htu`/`htm`/`jti`/`iat`/`uuid` claims). Without it the API returns `401 missing auth token`
-- Item detail response is wrapped as `{"result":"OK","data":{...}}` - `_detail_via_api` unwraps `body["data"]` before reading `name`/`description`
-- Mercari JP's website is now fully CSR - the search HTML contains no `__NEXT_DATA__` and no `/item/m...` hrefs, so the HTML fallback is mostly best-effort while API is primary
-- Windows stdout/stderr can be forced to UTF-8 on startup so Japanese text prints correctly
+Scoring (`scoring.py`):
+- `final_score = 0.6 * length_score + 0.4 * coverage_score`
+- descriptions shorter than 30 chars are penalized
