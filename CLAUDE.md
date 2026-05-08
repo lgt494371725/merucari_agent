@@ -25,7 +25,8 @@ python webapp.py
 # open http://127.0.0.1:5000
 
 # Tests
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v          # Python (stdlib unittest)
+node --test tests/test_recent_keywords.mjs       # JS (Node 18+ built-in runner)
 ```
 
 ## Listing Workflow (Recommended)
