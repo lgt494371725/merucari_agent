@@ -101,6 +101,59 @@ def _pick_select_or_combobox(page: Page, label_text: str, value: str) -> bool:
         return False
 
 
+def _pick_condition(page: Page, value: str) -> bool:
+    """商品の状態 is sometimes not a native select; handle modal/list flows."""
+    if not value or value == "未設定":
+        logging.info("skip condition: empty or default value")
+        return False
+
+    # Try generic strategy first.
+    if _pick_select_or_combobox(page, "商品の状態", value):
+        return True
+
+    # Fallback: click state chooser entry, then click option in list/modal.
+    trigger_selectors = [
+        'text="商品の状態を選択する"',
+        'a:has-text("商品の状態")',
+        'button:has-text("商品の状態")',
+        '[role="button"]:has-text("商品の状態")',
+    ]
+    try:
+        trigger = _first_visible(page, trigger_selectors)
+        if trigger:
+            trigger.click(timeout=1200)
+            page.wait_for_timeout(300)
+    except Exception as exc:
+        logging.info("condition trigger click skipped: %s", exc)
+
+    option_selectors = [
+        f'li:has-text("{value}")',
+        f'[role="option"]:has-text("{value}")',
+        f'button:has-text("{value}")',
+        f'label:has-text("{value}")',
+        f'text="{value}"',
+    ]
+    try:
+        option = _first_visible(page, option_selectors)
+        if not option:
+            logging.warning("skip condition: option not found %s", value)
+            return False
+        option.click(timeout=1200)
+
+        # Some flows require explicit confirm.
+        confirm = _first_visible(
+            page,
+            ['button:has-text("決定")', 'button:has-text("完了")', 'button:has-text("保存")'],
+        )
+        if confirm:
+            confirm.click(timeout=1200)
+        logging.info("selected(condition) = %s", value)
+        return True
+    except Exception as exc:
+        logging.warning("skip condition: %s", exc)
+        return False
+
+
 def _fill_listing(page: Page, draft: Dict[str, Any]) -> Dict[str, bool]:
     result = {
         "title": False,
@@ -108,6 +161,7 @@ def _fill_listing(page: Page, draft: Dict[str, Any]) -> Dict[str, bool]:
         "price": False,
         "condition": False,
         "shipping_payer": False,
+        "shipping_method": False,
         "shipping_days": False,
         "shipping_from": False,
     }
@@ -139,11 +193,12 @@ def _fill_listing(page: Page, draft: Dict[str, Any]) -> Dict[str, bool]:
         price_value,
     )
 
-    result["condition"] = _pick_select_or_combobox(
-        page, "商品の状態", str(draft.get("condition", "") or "")
-    )
+    result["condition"] = _pick_condition(page, str(draft.get("condition", "") or ""))
     result["shipping_payer"] = _pick_select_or_combobox(
         page, "配送料の負担", str(draft.get("shippingPayer", "") or "")
+    )
+    result["shipping_method"] = _pick_select_or_combobox(
+        page, "配送の方法", str(draft.get("shippingMethod", "") or "")
     )
     result["shipping_days"] = _pick_select_or_combobox(
         page, "発送までの日数", str(draft.get("shippingDays", "") or "")
