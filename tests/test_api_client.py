@@ -101,6 +101,11 @@ class MercariApiClientUnitTests(unittest.TestCase):
                             "description": "line1\r\nline2",
                             "price": "1,200",
                             "thumbnails": ["thumb-x"],
+                            "categories": [
+                                {"name": "本・雑誌・漫画"},
+                                {"name": "本"},
+                                {"name": "資格・検定"},
+                            ],
                         },
                     },
                 )
@@ -113,6 +118,7 @@ class MercariApiClientUnitTests(unittest.TestCase):
         self.assertEqual(result["description"], "line1\nline2")
         self.assertEqual(result["price"], 1200)
         self.assertEqual(result["thumbnail"], "thumb-x")
+        self.assertEqual(result["category"], "本・雑誌・漫画 > 本 > 資格・検定")
 
     @patch("mercari_api_client.httpx.AsyncClient", _FakeAsyncClient)
     def test_search_titles_returns_id_title_price_thumbnail(self):

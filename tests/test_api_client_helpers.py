@@ -11,7 +11,7 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from mercari_api_client import _clean_multiline, _first_thumbnail
+from mercari_api_client import _category_path, _clean_multiline, _first_thumbnail
 
 
 class CleanMultilineTest(unittest.TestCase):
@@ -99,6 +99,35 @@ class FirstThumbnailTest(unittest.TestCase):
         # Behaviour: nested dict has no known sub-key, so we don't get a hit
         # from `photos`; the helper then tries scalar keys and finds `thumbnail`.
         self.assertEqual(_first_thumbnail(item), "https://x/t.jpg")
+
+
+class CategoryPathTest(unittest.TestCase):
+    def test_category_path_from_list_of_dicts(self):
+        item = {
+            "categories": [
+                {"name": "本・雑誌・漫画"},
+                {"name": "本"},
+                {"name": "資格・検定"},
+            ]
+        }
+        self.assertEqual(_category_path(item), "本・雑誌・漫画 > 本 > 資格・検定")
+
+    def test_category_path_from_nested_category_path(self):
+        item = {
+            "category": {
+                "name": "資格・検定",
+                "path": [{"name": "本・雑誌・漫画"}, {"name": "本"}],
+            }
+        }
+        self.assertEqual(_category_path(item), "本・雑誌・漫画 > 本 > 資格・検定")
+
+    def test_category_path_from_name_fields(self):
+        item = {
+            "rootCategoryName": "本・雑誌・漫画",
+            "parentCategoryName": "本",
+            "categoryName": "資格・検定",
+        }
+        self.assertEqual(_category_path(item), "本・雑誌・漫画 > 本 > 資格・検定")
 
 
 if __name__ == "__main__":

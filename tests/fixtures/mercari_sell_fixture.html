@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>Mercari Sell Fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    [hidden] { display: none !important; }
+    .field { margin: 10px 0; display: block; }
+    .row, .card { display: block; width: 420px; margin: 8px 0; padding: 10px; border: 1px solid #ccc; background: #fff; text-align: left; cursor: pointer; }
+    .card[aria-checked="true"], .row.selected { border-color: #0877ff; background: #eef6ff; }
+    input, textarea, select { display: block; width: 420px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <main id="main-form">
+    <label class="field">商品名
+      <input name="name" maxlength="40" />
+    </label>
+    <label class="field">商品の説明
+      <textarea name="description"></textarea>
+    </label>
+    <label class="field">販売価格
+      <input name="price" inputmode="numeric" />
+    </label>
+
+    <button type="button" class="row" data-open="category">カテゴリーを選択する</button>
+    <output id="category-value" data-testid="category-value"></output>
+
+    <button type="button" class="row" data-open="condition">商品の状態を選択する</button>
+    <output id="condition-value" data-testid="condition-value"></output>
+
+    <label class="field">配送料の負担
+      <select data-testid="shipping-payer">
+        <option>送料込み(出品者負担)</option>
+        <option>着払い(購入者負担)</option>
+      </select>
+    </label>
+
+    <button type="button" class="row" data-open="shipping-method">配送の方法を選択する</button>
+    <output id="shipping-method-value" data-testid="shipping-method-value"></output>
+
+    <button type="button" class="row" data-open="shipping-days">発送までの日数を選択する</button>
+    <output id="shipping-days-value" data-testid="shipping-days-value"></output>
+
+    <button type="button" class="row" data-open="shipping-from">発送元の地域を選択する</button>
+    <output id="shipping-from-value" data-testid="shipping-from-value"></output>
+  </main>
+
+  <section id="category-panel" hidden>
+    <h1>カテゴリー</h1>
+    <div id="category-level-0">
+      <button type="button" class="row" data-category="本・雑誌・漫画">本・雑誌・漫画</button>
+      <button type="button" class="row" data-category="ゲーム・おもちゃ・グッズ">ゲーム・おもちゃ・グッズ</button>
+    </div>
+    <div id="category-level-1" hidden>
+      <button type="button" class="row" data-category="本">本</button>
+      <button type="button" class="row" data-category="雑誌">雑誌</button>
+    </div>
+    <div id="category-level-2" hidden>
+      <button type="button" class="row" data-category="資格・検定">資格・検定</button>
+      <button type="button" class="row" data-category="文学・小説">文学・小説</button>
+    </div>
+  </section>
+
+  <section id="condition-panel" hidden>
+    <h1>商品の状態</h1>
+    <button type="button" class="row" data-condition="新品、未使用">新品、未使用<br><small>新品で購入し、一度も使用していない</small></button>
+    <button type="button" class="row" data-condition="未使用に近い">未使用に近い<br><small>数回使用し、あまり使用感がない</small></button>
+    <button type="button" class="row" data-condition="目立った傷や汚れなし">目立った傷や汚れなし</button>
+  </section>
+
+  <section id="shipping-method-panel" hidden>
+    <h1>配送の方法</h1>
+    <button type="button" class="card" role="radio" aria-checked="false" data-shipping-method="らくらくメルカリ便">
+      らくらくメルカリ便
+      <span>ネコポス</span>
+    </button>
+    <button type="button" class="card" role="radio" aria-checked="false" data-shipping-method="ゆうゆうメルカリ便">
+      ゆうゆうメルカリ便
+      <span>ゆうパケットポスト</span>
+    </button>
+    <button type="button" class="row" data-testid="shipping-method-update">更新する</button>
+  </section>
+
+  <section id="shipping-days-panel" hidden>
+    <h1>発送までの日数</h1>
+    <button type="button" class="row" data-shipping-days="1~2日で発送">1~2日で発送</button>
+    <button type="button" class="row" data-shipping-days="2~3日で発送">2~3日で発送</button>
+    <button type="button" class="row" data-shipping-days="4~7日で発送">4~7日で発送</button>
+  </section>
+
+  <section id="shipping-from-panel" hidden>
+    <h1>発送元の地域</h1>
+    <button type="button" class="row" data-shipping-from="東京都">東京都</button>
+    <button type="button" class="row" data-shipping-from="大阪府">大阪府</button>
+  </section>
+
+  <script>
+    const main = document.querySelector("#main-form");
+    const panels = {
+      category: document.querySelector("#category-panel"),
+      condition: document.querySelector("#condition-panel"),
+      "shipping-method": document.querySelector("#shipping-method-panel"),
+      "shipping-days": document.querySelector("#shipping-days-panel"),
+      "shipping-from": document.querySelector("#shipping-from-panel"),
+    };
+    const state = { category: [] };
+    const showMain = () => {
+      main.hidden = false;
+      Object.values(panels).forEach((panel) => panel.hidden = true);
+    };
+    const showPanel = (key) => {
+      main.hidden = true;
+      Object.values(panels).forEach((panel) => panel.hidden = true);
+      panels[key].hidden = false;
+    };
+    document.querySelectorAll("[data-open]").forEach((button) => {
+      button.addEventListener("click", () => showPanel(button.dataset.open));
+    });
+    document.querySelectorAll("[data-category]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.category.push(button.dataset.category);
+        document.querySelector("#category-level-0").hidden = true;
+        document.querySelector("#category-level-1").hidden = true;
+        document.querySelector("#category-level-2").hidden = true;
+        if (state.category.length === 1) {
+          document.querySelector("#category-level-1").hidden = false;
+          return;
+        }
+        if (state.category.length === 2) {
+          document.querySelector("#category-level-2").hidden = false;
+          return;
+        }
+        document.querySelector("#category-value").value = state.category.join(" > ");
+        showMain();
+      });
+    });
+    document.querySelectorAll("[data-condition]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#condition-value").value = button.dataset.condition;
+        showMain();
+      });
+    });
+    document.querySelectorAll("[data-shipping-method]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-shipping-method]").forEach((el) => el.setAttribute("aria-checked", "false"));
+        button.setAttribute("aria-checked", "true");
+      });
+    });
+    document.querySelector("[data-testid='shipping-method-update']").addEventListener("click", () => {
+      const selected = document.querySelector("[data-shipping-method][aria-checked='true']");
+      if (selected) {
+        document.querySelector("#shipping-method-value").value = selected.dataset.shippingMethod;
+      }
+      showMain();
+    });
+    document.querySelectorAll("[data-shipping-days]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#shipping-days-value").value = button.dataset.shippingDays;
+        showMain();
+      });
+    });
+    document.querySelectorAll("[data-shipping-from]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#shipping-from-value").value = button.dataset.shippingFrom;
+        showMain();
+      });
+    });
+  </script>
+</body>
+</html>

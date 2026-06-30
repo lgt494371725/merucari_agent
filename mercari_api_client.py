@@ -76,6 +76,80 @@ def _first_thumbnail(item: Dict) -> str:
     return ""
 
 
+def _category_path(item: Dict) -> str:
+    """Best-effort extraction of Mercari category names as `A > B > C`.
+
+    Mercari detail payloads vary across API and embedded Next.js data. The
+    category may arrive as a list of names, a list of dicts, a nested category
+    object, or separate root/parent/leaf-ish fields.
+    """
+    if not isinstance(item, dict):
+        return ""
+
+    def name_from(value) -> str:
+        if isinstance(value, str):
+            return _clean(value)
+        if isinstance(value, dict):
+            for key in ("name", "displayName", "display_name", "label"):
+                text = _clean(value.get(key, ""))
+                if text:
+                    return text
+        return ""
+
+    def path_from_list(values) -> str:
+        if not isinstance(values, list):
+            return ""
+        names = [name_from(v) for v in values]
+        names = [n for n in names if n]
+        return " > ".join(dict.fromkeys(names))
+
+    for key in ("categoryPath", "category_path", "categories", "categoryList"):
+        path = path_from_list(item.get(key))
+        if path:
+            return path
+
+    category = item.get("category")
+    if isinstance(category, dict):
+        for key in ("path", "pathNames", "path_names", "parents", "breadcrumbs"):
+            path = path_from_list(category.get(key))
+            if path:
+                leaf = name_from(category)
+                if leaf and leaf not in path.split(" > "):
+                    return f"{path} > {leaf}"
+                return path
+        leaf = name_from(category)
+        if leaf:
+            parents = []
+            cur = category
+            for key in ("parent", "parentCategory", "parent_category"):
+                parent = cur.get(key)
+                while isinstance(parent, dict):
+                    parent_name = name_from(parent)
+                    if parent_name:
+                        parents.append(parent_name)
+                    parent = parent.get(key) or parent.get("parent") or parent.get("parentCategory")
+            names = list(reversed(parents)) + [leaf]
+            return " > ".join(dict.fromkeys(names))
+    elif isinstance(category, list):
+        path = path_from_list(category)
+        if path:
+            return path
+    elif isinstance(category, str):
+        return _clean(category)
+
+    names = []
+    for key in (
+        "rootCategoryName",
+        "parentCategoryName",
+        "childCategoryName",
+        "categoryName",
+    ):
+        text = _clean(item.get(key, ""))
+        if text:
+            names.append(text)
+    return " > ".join(dict.fromkeys(names))
+
+
 def _to_int(value) -> int:
     """Coerce Mercari's price fields (sometimes int, sometimes str) to int."""
     if value is None or value == "":
@@ -372,6 +446,7 @@ class MercariApiClient:
                         "description": description,
                         "price": price,
                         "thumbnail": _first_thumbnail(data),
+                        "category": _category_path(data),
                     }
         except Exception:
             pass
@@ -387,7 +462,14 @@ class MercariApiClient:
             description = self._description_from_html(html)
             if not title and not description:
                 return None
-            return {"id": item_id, "url": url, "title": title, "description": description}
+            nd = self._next_data_item(html)
+            return {
+                "id": item_id,
+                "url": url,
+                "title": title,
+                "description": description,
+                "category": _category_path(nd or {}),
+            }
         except Exception:
             return None
 
