@@ -1,12 +1,63 @@
 import argparse
 import json
 import logging
+import time
 from typing import Any, Dict, Iterable
 from urllib.request import Request, urlopen
 
 from playwright.sync_api import Page, sync_playwright
 
 SELL_URL = "https://jp.mercari.com/sell/create"
+VISIBLE_TIMEOUT_MS = 250
+ACTION_TIMEOUT_MS = 500
+
+SET_INPUT_VALUE_JS = """
+({ selectors, value }) => {
+  const setValue = (el, nextValue) => {
+    const proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) {
+      setter.call(el, nextValue);
+    } else {
+      el.value = nextValue;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  const isUsable = (el) => {
+    if (!el || el.disabled || el.readOnly) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  for (const selector of selectors) {
+    for (const el of document.querySelectorAll(selector)) {
+      if (!isUsable(el)) continue;
+      setValue(el, value);
+      return selector;
+    }
+  }
+  return null;
+}
+"""
+
+SELECT_OPTION_BY_LABEL_JS = """
+({ value }) => {
+  const wanted = String(value).trim();
+  if (!wanted) return null;
+  for (const select of document.querySelectorAll("select")) {
+    if (select.disabled) continue;
+    const option = Array.from(select.options).find((opt) => opt.textContent.trim() === wanted);
+    if (!option) continue;
+    select.value = option.value;
+    select.dispatchEvent(new Event("input", { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return option.textContent.trim();
+  }
+  return null;
+}
+"""
 
 
 def setup_logging(log_file: str) -> None:
@@ -26,34 +77,62 @@ def _http_get_json(url: str) -> Dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _first_visible(page: Page, selectors: Iterable[str]):
+def _first_visible(page: Page, selectors: Iterable[str], timeout_ms: int = VISIBLE_TIMEOUT_MS):
     for sel in selectors:
         loc = page.locator(sel).first
         try:
-            if loc.is_visible(timeout=800):
+            if loc.is_visible(timeout=timeout_ms):
                 return loc
         except Exception:
             continue
     return None
 
 
+def _set_text_value_fast(page: Page, selectors: Iterable[str], value: str) -> bool:
+    try:
+        matched = page.evaluate(SET_INPUT_VALUE_JS, {"selectors": list(selectors), "value": value})
+    except Exception as exc:
+        logging.info("fast text fill failed: %s", exc)
+        return False
+    return bool(matched)
+
+
 def _fill_text(page: Page, name: str, selectors: Iterable[str], value: str) -> bool:
     if not value:
         logging.info("skip %s: empty value", name)
         return False
+    selectors = list(selectors)
+    if _set_text_value_fast(page, selectors, value):
+        logging.info("filled(fast) %s", name)
+        return True
     loc = _first_visible(page, selectors)
     if not loc:
         logging.warning("skip %s: no selector matched", name)
         return False
-    loc.fill(value)
+    loc.fill(value, timeout=ACTION_TIMEOUT_MS)
     logging.info("filled %s", name)
     return True
+
+
+def _select_native_by_label_fast(page: Page, label_text: str, value: str) -> bool:
+    try:
+        matched = page.evaluate(SELECT_OPTION_BY_LABEL_JS, {"value": value})
+    except Exception as exc:
+        logging.info("fast native select failed for %s: %s", label_text, exc)
+        return False
+    if matched:
+        logging.info("selected(native-fast) %s = %s", label_text, value)
+        return True
+    return False
 
 
 def _pick_select_or_combobox(page: Page, label_text: str, value: str) -> bool:
     if not value:
         logging.info("skip select %s: empty value", label_text)
         return False
+    if _select_native_by_label_fast(page, label_text, value):
+        return True
+
     # 1) Native <select> path: robust and does not need visible option clicks.
     try:
         selects = page.locator("select")
@@ -65,7 +144,7 @@ def _pick_select_or_combobox(page: Page, label_text: str, value: str) -> bool:
                 txt = (options.nth(j).inner_text() or "").strip()
                 texts.append(txt)
             if value in texts:
-                sel.select_option(label=value)
+                sel.select_option(label=value, timeout=ACTION_TIMEOUT_MS)
                 logging.info("selected(native) %s = %s", label_text, value)
                 return True
     except Exception as exc:
@@ -74,12 +153,12 @@ def _pick_select_or_combobox(page: Page, label_text: str, value: str) -> bool:
     # 2) Combobox/button path near label.
     try:
         block = page.locator(f"text={label_text}").first
-        if not block.is_visible(timeout=1200):
+        if not block.is_visible(timeout=VISIBLE_TIMEOUT_MS):
             logging.warning("skip select %s: label not visible", label_text)
             return False
         container = block.locator("xpath=ancestor::*[self::div or self::section][1]")
         combo = container.locator('[role="combobox"], button').first
-        combo.click(timeout=1200)
+        combo.click(timeout=ACTION_TIMEOUT_MS)
         # Option can be role=option/listitem/button depending on frontend impl.
         candidates = [
             f'[role="option"]:has-text("{value}")',
@@ -90,8 +169,8 @@ def _pick_select_or_combobox(page: Page, label_text: str, value: str) -> bool:
         ]
         for sel_text in candidates:
             opt = page.locator(sel_text).first
-            if opt.is_visible(timeout=800):
-                opt.click(timeout=1000)
+            if opt.is_visible(timeout=VISIBLE_TIMEOUT_MS):
+                opt.click(timeout=ACTION_TIMEOUT_MS)
                 logging.info("selected(combo) %s = %s", label_text, value)
                 return True
         logging.warning("skip select %s: option not found %s", label_text, value)
@@ -121,8 +200,7 @@ def _pick_condition(page: Page, value: str) -> bool:
     try:
         trigger = _first_visible(page, trigger_selectors)
         if trigger:
-            trigger.click(timeout=1200)
-            page.wait_for_timeout(300)
+            trigger.click(timeout=ACTION_TIMEOUT_MS)
     except Exception as exc:
         logging.info("condition trigger click skipped: %s", exc)
 
@@ -138,7 +216,7 @@ def _pick_condition(page: Page, value: str) -> bool:
         if not option:
             logging.warning("skip condition: option not found %s", value)
             return False
-        option.click(timeout=1200)
+        option.click(timeout=ACTION_TIMEOUT_MS)
 
         # Some flows require explicit confirm.
         confirm = _first_visible(
@@ -146,7 +224,7 @@ def _pick_condition(page: Page, value: str) -> bool:
             ['button:has-text("決定")', 'button:has-text("完了")', 'button:has-text("保存")'],
         )
         if confirm:
-            confirm.click(timeout=1200)
+            confirm.click(timeout=ACTION_TIMEOUT_MS)
         logging.info("selected(condition) = %s", value)
         return True
     except Exception as exc:
@@ -218,12 +296,14 @@ def load_draft_from_webapp(base_url: str) -> Dict[str, Any]:
     return draft
 
 
-def run_via_cdp(base_url: str, cdp_url: str) -> None:
+def run_via_cdp(base_url: str, cdp_url: str, review_delay_ms: int = 0) -> None:
     draft = load_draft_from_webapp(base_url)
     with sync_playwright() as p:
+        started = time.perf_counter()
         logging.info("connecting to CDP: %s", cdp_url)
         browser = p.chromium.connect_over_cdp(cdp_url)
         context = browser.contexts[0] if browser.contexts else browser.new_context(locale="ja-JP")
+        context.set_default_timeout(ACTION_TIMEOUT_MS)
         page = context.new_page()
         page.goto(SELL_URL, wait_until="domcontentloaded")
         # Wait for form core fields to render.
@@ -231,12 +311,14 @@ def run_via_cdp(base_url: str, cdp_url: str) -> None:
             page.wait_for_selector("textarea, input", timeout=8000)
         except Exception:
             logging.warning("form selector wait timed out; continue best-effort")
-        page.wait_for_timeout(1500)
         result = _fill_listing(page, draft)
         logging.info("auto-fill result: %s", result)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logging.info("auto-fill elapsed: %sms", elapsed_ms)
         logging.info("please review fields manually before submitting")
         page.bring_to_front()
-        page.wait_for_timeout(3000)
+        if review_delay_ms > 0:
+            page.wait_for_timeout(review_delay_ms)
 
 
 def parse_args() -> argparse.Namespace:
@@ -246,10 +328,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:5000")
     parser.add_argument("--cdp-url", default="http://127.0.0.1:9222")
     parser.add_argument("--log-file", default="")
+    parser.add_argument(
+        "--review-delay-ms",
+        type=int,
+        default=0,
+        help="Optional delay after filling. Defaults to 0 so control returns immediately.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     setup_logging(args.log_file)
-    run_via_cdp(base_url=args.base_url, cdp_url=args.cdp_url)
+    run_via_cdp(
+        base_url=args.base_url,
+        cdp_url=args.cdp_url,
+        review_delay_ms=max(0, args.review_delay_ms),
+    )

@@ -15,10 +15,34 @@ Current modules:
 
 ## Running
 
+### Daily startup on macOS
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-playwright install chromium
+./run.sh
+```
+
+This script uses the existing `.venv`, starts the webapp, and opens Google
+Chrome with CDP enabled on `http://127.0.0.1:9222`.
+
+Press `Ctrl+C` in the terminal running `./run.sh` to stop the webapp.
+
+### Setup
+
+```bash
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies inside the virtual environment
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+### Manual run
+
+```bash
+source .venv/bin/activate
 
 # Web API/UI
 python webapp.py
@@ -29,21 +53,34 @@ python -m unittest discover -s tests -v          # Python (stdlib unittest)
 node --test tests/test_recent_keywords.mjs       # JS (Node 18+ built-in runner)
 ```
 
+If `python webapp.py` raises `ModuleNotFoundError: No module named 'flask'`,
+activate the virtual environment first:
+
+```bash
+source .venv/bin/activate
+python webapp.py
+```
+
 ## Listing Workflow (Recommended)
 
-1. Start webapp.
-2. Start Chrome with CDP enabled (close all Chrome windows first):
-```powershell
-& "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\tmp\chrome-debug-profile"
+1. Start everything on macOS:
+```bash
+./run.sh
 ```
-3. Verify CDP endpoint: `http://127.0.0.1:9222/json/version`.
-4. In webapp:
+
+Manual Chrome CDP command for macOS:
+```bash
+open -na "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir=".pw-user-data/chrome-debug-profile"
+```
+
+2. Verify CDP endpoint: `http://127.0.0.1:9222/json/version`.
+3. In webapp:
    - search and select item
    - click `Copy to Draft`
    - edit draft fields
    - click `保存草稿（自动出品用）`
    - click `运行自动填表（连接现有浏览器）`
-5. Review Mercari sell page manually, then submit.
+4. Review Mercari sell page manually, then submit.
 
 ## Autofill Logs
 
