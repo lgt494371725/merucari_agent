@@ -78,3 +78,27 @@ test("sanitize: returns [] for non-array input", () => {
   assert.deepEqual(RK.sanitize("nope", 10), []);
   assert.deepEqual(RK.sanitize(42, 10), []);
 });
+
+test("appendToken: appends a fixed term to an empty or existing keyword", () => {
+  assert.equal(RK.appendToken("", "A"), "A");
+  assert.equal(RK.appendToken("原有词", "A"), "原有词 A");
+});
+
+test("appendToken: does not duplicate an existing complete token", () => {
+  assert.equal(RK.appendToken("原有词 A", "A"), "原有词 A");
+  assert.equal(RK.appendToken("A 原有词", "A"), "A 原有词");
+});
+
+test("appendToken: trims and normalizes spaces", () => {
+  assert.equal(RK.appendToken("  原有词   ", "  A  "), "原有词 A");
+  assert.equal(RK.appendToken("原有詞    A", "A"), "原有詞 A");
+});
+
+test("appendToken: complete-token matching is case-sensitive", () => {
+  assert.equal(RK.appendToken("Nike", "nike"), "Nike nike");
+});
+
+test("appendToken: ignores empty fixed terms", () => {
+  assert.equal(RK.appendToken("  原有词  ", ""), "原有词");
+  assert.equal(RK.appendToken("  原有词  ", "   "), "原有词");
+});

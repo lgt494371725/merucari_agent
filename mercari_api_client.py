@@ -167,6 +167,16 @@ def _b64url(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
 
 
+def _search_item_summary(item: Dict) -> Dict[str, str]:
+    return {
+        "id": item.get("id", ""),
+        "title": _clean(item.get("name", "")),
+        "price": _to_int(item.get("price")),
+        "thumbnail": _first_thumbnail(item),
+        "status": _clean(item.get("status", "")),
+    }
+
+
 class _DpopSigner:
     """Generates DPoP JWT tokens required by Mercari JP's API."""
 
@@ -259,16 +269,7 @@ class MercariApiClient:
             )
             resp.raise_for_status()
             items = resp.json().get("items", [])
-            return [
-                {
-                    "id": it.get("id", ""),
-                    "title": _clean(it.get("name", "")),
-                    "price": _to_int(it.get("price")),
-                    "thumbnail": _first_thumbnail(it),
-                }
-                for it in items
-                if it.get("id")
-            ][:top_n]
+            return [_search_item_summary(it) for it in items if it.get("id")][:top_n]
 
     async def _details_for_ids(self, item_ids: List[str]) -> List[Dict[str, str]]:
         if not item_ids:
@@ -291,7 +292,7 @@ class MercariApiClient:
         return await self._search_via_html(client, keyword, top_n)
 
     def _build_search_payload(self, keyword: str, top_n: int) -> Dict:
-        return {
+        payload = {
             "searchSessionId": str(uuid.uuid4()),
             "indexRouting": "INDEX_ROUTING_UNSPECIFIED",
             "thumbnailTypes": [],
@@ -300,7 +301,6 @@ class MercariApiClient:
                 "excludeKeyword": "",
                 "sort": "SORT_SCORE",
                 "order": "ORDER_DESC",
-                "status": ["STATUS_ON_SALE"],
                 "sizeId": [],
                 "categoryId": [],
                 "brandId": [],
@@ -328,6 +328,7 @@ class MercariApiClient:
             "withItemSizes": False,
             "useDynamicAttribute": False,
         }
+        return payload
 
     async def _search_via_api(
         self, client: httpx.AsyncClient, keyword: str, top_n: int

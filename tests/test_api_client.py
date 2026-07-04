@@ -39,7 +39,7 @@ class _FakeAsyncClient:
             200,
             {
                 "items": [
-                    {"id": "m1", "name": "title 1", "price": "1200", "thumbnails": ["u1"]},
+                    {"id": "m1", "name": "title 1", "price": "1200", "thumbnails": ["u1"], "status": "ITEM_STATUS_SOLD_OUT"},
                     {"id": "m2", "name": "title 2", "price": 2200, "thumbnails": ["u2"]},
                 ]
             },
@@ -56,6 +56,7 @@ class MercariApiClientUnitTests(unittest.TestCase):
         payload = client._build_search_payload("abc", 17)
         self.assertEqual(payload["searchCondition"]["keyword"], "abc")
         self.assertEqual(payload["pageSize"], 17)
+        self.assertNotIn("status", payload["searchCondition"])
 
     def test_search_via_api_limits_top_n(self):
         client = MercariApiClient()
@@ -129,6 +130,45 @@ class MercariApiClientUnitTests(unittest.TestCase):
         self.assertEqual(items[0]["title"], "title 1")
         self.assertEqual(items[0]["price"], 1200)
         self.assertEqual(items[0]["thumbnail"], "u1")
+        self.assertEqual(items[0]["status"], "ITEM_STATUS_SOLD_OUT")
+
+    def test_search_titles_does_not_send_status_filter(self):
+        client = MercariApiClient(timeout=1.0)
+        sent_payloads = []
+
+        class _NoStatusClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, json=None, headers=None):
+                sent_payloads.append(json)
+                return _FakeResponse(
+                    200,
+                    {
+                        "items": [
+                            {
+                                "id": "sale-1",
+                                "name": "sale item",
+                                "price": "1000",
+                                "status": "ITEM_STATUS_ON_SALE",
+                            }
+                        ]
+                    },
+                )
+
+        with patch("mercari_api_client.httpx.AsyncClient", _NoStatusClient):
+            items = client.search_titles("nikke", top_n=10)
+
+        self.assertEqual(len(sent_payloads), 1)
+        self.assertNotIn("status", sent_payloads[0]["searchCondition"])
+        self.assertEqual([item["id"] for item in items], ["sale-1"])
+        self.assertEqual(items[0]["status"], "ITEM_STATUS_ON_SALE")
 
     def test_fetch_detail_prefers_api_then_html(self):
         client = MercariApiClient()

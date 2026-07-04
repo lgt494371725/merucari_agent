@@ -53,6 +53,11 @@ function formatPrice(value) {
   return `¥${n.toLocaleString()}`;
 }
 
+function isSoldOutStatus(status) {
+  const v = String(status || "").toUpperCase();
+  return v.includes("SOLD");
+}
+
 // ── Thumbnail (Mercari image when available, fallback to icon) ─────────────
 function PlaceholderImg({ size = 56, src }) {
   const [failed, setFailed] = useState(false);
@@ -83,6 +88,7 @@ function PlaceholderImg({ size = 56, src }) {
 // ── Result Row (list layout) ───────────────────────────────────────────────
 function ResultRow({ item, selected, focused, onSelect, onDoubleClick, density, accent, showImg }) {
   const pad = density === "compact" ? "8px 12px" : "12px 16px";
+  const soldOut = isSoldOutStatus(item.status);
   const bg = focused ? accentAlpha(accent, 0.12) : selected ? accentAlpha(accent, 0.07) : "transparent";
   const border = focused ? `1.5px solid ${accentAlpha(accent, 0.5)}` : "1.5px solid transparent";
   return (
@@ -91,15 +97,19 @@ function ResultRow({ item, selected, focused, onSelect, onDoubleClick, density, 
       onDoubleClick={onDoubleClick}
       style={{ padding:pad, display:"flex", gap:12, alignItems:"center", background:bg, border, borderRadius:8, margin:"2px 4px", cursor:"pointer", transition:"background 0.12s" }}
     >
-      {showImg && <PlaceholderImg size={density==="compact"?40:52} src={item.thumbnail} />}
+      <div style={{ position:"relative" }}>
+        {showImg && <PlaceholderImg size={density==="compact"?40:52} src={item.thumbnail} />}
+        {soldOut && <span style={{ position:"absolute", left:4, bottom:4, padding:"1px 5px", background:"#444", color:"#fff", borderRadius:4, fontSize:9, fontWeight:700, letterSpacing:"0.03em" }}>SOLD</span>}
+      </div>
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:14, fontWeight:500, color:"#1a1714", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+        <div style={{ fontSize:14, fontWeight:500, color:"#1a1714", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", textDecoration:soldOut?"line-through":"none" }}>
           {item.title || "(no title)"}
         </div>
         <div style={{ fontSize:12, color:"#888", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
           ID {item.id}
         </div>
       </div>
+      {soldOut && <div style={{ padding:"2px 7px", borderRadius:999, background:"#eee", color:"#666", fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>SOLD</div>}
       <div style={{ fontSize:16, fontWeight:600, color:accent, whiteSpace:"nowrap" }}>
         {formatPrice(item.price)}
       </div>
@@ -109,15 +119,20 @@ function ResultRow({ item, selected, focused, onSelect, onDoubleClick, density, 
 
 // ── Result Card (grid layout) ──────────────────────────────────────────────
 function ResultCard({ item, selected, focused, onSelect, onDoubleClick, accent }) {
+  const soldOut = isSoldOutStatus(item.status);
   const bg = focused ? accentAlpha(accent, 0.1) : selected ? accentAlpha(accent, 0.06) : "#fff";
   const shadow = focused ? `0 0 0 2px ${accentAlpha(accent,0.5)}` : selected ? `0 0 0 1.5px ${accentAlpha(accent,0.3)}` : "0 1px 4px rgba(0,0,0,0.08)";
   return (
     <div onClick={onSelect} onDoubleClick={onDoubleClick}
       style={{ background:bg, borderRadius:10, boxShadow:shadow, padding:"12px", cursor:"pointer", transition:"box-shadow 0.12s, background 0.12s", display:"flex", flexDirection:"column", gap:8 }}>
-      <PlaceholderImg size={80} src={item.thumbnail} />
-      <div style={{ fontSize:13, fontWeight:500, color:"#1a1714", lineHeight:1.35, WebkitLineClamp:2, overflow:"hidden", display:"-webkit-box", WebkitBoxOrient:"vertical" }}>{item.title}</div>
+      <div style={{ position:"relative", width:80 }}>
+        <PlaceholderImg size={80} src={item.thumbnail} />
+        {soldOut && <span style={{ position:"absolute", left:5, bottom:5, padding:"2px 6px", background:"#444", color:"#fff", borderRadius:4, fontSize:10, fontWeight:700, letterSpacing:"0.03em" }}>SOLD</span>}
+      </div>
+      <div style={{ fontSize:13, fontWeight:500, color:"#1a1714", lineHeight:1.35, WebkitLineClamp:2, overflow:"hidden", display:"-webkit-box", WebkitBoxOrient:"vertical", textDecoration:soldOut?"line-through":"none" }}>{item.title}</div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontSize:15, fontWeight:600, color:accent }}>{formatPrice(item.price)}</span>
+        {soldOut && <span style={{ padding:"2px 7px", borderRadius:999, background:"#eee", color:"#666", fontSize:11, fontWeight:700 }}>SOLD</span>}
       </div>
     </div>
   );
@@ -401,19 +416,32 @@ function App() {
   const splitRatio = SPLIT_RATIO;
 
   const [keyword, setKeyword] = useState("");
-  const [topN, setTopN] = useState(10);
+  const [topN, setTopN] = useState(30);
   const RECENT_KEY = "mercari-agent.recent-keywords";
+  const FIXED_KEY = "mercari-agent.fixed-keywords";
   const RECENT_MAX = 10;
+  const FIXED_MAX = 30;
   const [recent, setRecent] = useState(() => {
     try {
       const raw = localStorage.getItem(RECENT_KEY);
       return RecentKeywords.sanitize(raw ? JSON.parse(raw) : [], RECENT_MAX);
     } catch { return []; }
   });
+  const [fixedTerms, setFixedTerms] = useState(() => {
+    try {
+      const raw = localStorage.getItem(FIXED_KEY);
+      return RecentKeywords.sanitize(raw ? JSON.parse(raw) : [], FIXED_MAX);
+    } catch { return []; }
+  });
+  const [fixedInput, setFixedInput] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const persistRecent = useCallback((next) => {
     setRecent(next);
     try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+  const persistFixedTerms = useCallback((next) => {
+    setFixedTerms(next);
+    try { localStorage.setItem(FIXED_KEY, JSON.stringify(next)); } catch {}
   }, []);
   const pushRecent = useCallback((kw) => {
     persistRecent(RecentKeywords.add(recent, kw, RECENT_MAX));
@@ -421,6 +449,17 @@ function App() {
   const removeRecent = useCallback((kw) => {
     persistRecent(RecentKeywords.remove(recent, kw));
   }, [recent, persistRecent]);
+  const addFixedTerm = useCallback(() => {
+    const next = RecentKeywords.add(fixedTerms, fixedInput, FIXED_MAX);
+    persistFixedTerms(next);
+    setFixedInput("");
+  }, [fixedTerms, fixedInput, persistFixedTerms]);
+  const removeFixedTerm = useCallback((term) => {
+    persistFixedTerms(RecentKeywords.remove(fixedTerms, term));
+  }, [fixedTerms, persistFixedTerms]);
+  const appendFixedTerm = useCallback((term) => {
+    setKeyword(prev => RecentKeywords.appendToken(prev, term));
+  }, []);
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [focused, setFocused] = useState(null);
@@ -435,6 +474,19 @@ function App() {
   const [draftItem, setDraftItem] = useState(null);
   const detailReqRef = useRef(0);
   const dragRef = useRef(null);
+  const keywordInputRef = useRef(null);
+  const keywordDropdownRef = useRef(null);
+
+  const closeKeywordDropdownIfFocusLeft = useCallback(() => {
+    setTimeout(()=>{
+      const active = document.activeElement;
+      const focusInKeyword = keywordInputRef.current && keywordInputRef.current === active;
+      const focusInDropdown = keywordDropdownRef.current && keywordDropdownRef.current.contains(active);
+      if (!focusInKeyword && !focusInDropdown) {
+        setHistoryOpen(false);
+      }
+    }, 150);
+  }, []);
 
   const runSearch = useCallback(async (kwArg) => {
     const kw = (kwArg ?? keyword).trim();
@@ -572,6 +624,7 @@ function App() {
           <label style={{ fontSize:13, color:"#888", fontWeight:500, whiteSpace:"nowrap" }}>Keyword</label>
           <div style={{ position:"relative", flex:1 }}>
             <input
+              ref={keywordInputRef}
               value={keyword}
               onChange={e=>setKeyword(e.target.value)}
               onKeyDown={(e)=>{
@@ -579,41 +632,92 @@ function App() {
                 else if (e.key === "Escape") { setHistoryOpen(false); }
               }}
               onFocus={(e)=>{ e.target.style.borderColor=accent; setHistoryOpen(true); }}
-              onBlur={(e)=>{ e.target.style.borderColor="#e0dbd6"; setTimeout(()=>setHistoryOpen(false), 150); }}
+              onBlur={(e)=>{
+                e.target.style.borderColor="#e0dbd6";
+                closeKeywordDropdownIfFocusLeft();
+              }}
               placeholder="e.g. Nintendo Switch, Sony WH-1000XM5…"
               style={{ width:"100%", height:34, padding:"0 12px", border:"1.5px solid #e0dbd6", borderRadius:8, fontSize:14, outline:"none", fontFamily:"inherit", background:"#faf9f7", transition:"border-color 0.15s" }}
             />
-            {historyOpen && recent.length > 0 && (
+            {historyOpen && (
               <div
-                onMouseDown={(e)=>e.preventDefault()} /* keep focus on input so onBlur of input doesn't fire before click */
+                ref={keywordDropdownRef}
+                onBlur={closeKeywordDropdownIfFocusLeft}
                 style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:"#fff", border:"1px solid #e0dbd6", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,0.08)", zIndex:50, maxHeight:320, overflowY:"auto" }}
               >
-                <div style={{ padding:"8px 12px 4px", fontSize:11, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span>Recent searches</span>
-                  <button
-                    onClick={()=>{ persistRecent([]); setHistoryOpen(false); }}
-                    style={{ background:"transparent", border:"none", color:"#aaa", fontSize:11, cursor:"pointer", padding:0, fontFamily:"inherit" }}
-                  >Clear all</button>
-                </div>
-                {recent.map((kw)=>(
-                  <div
-                    key={kw}
-                    onClick={()=>{ setKeyword(kw); runSearch(kw); }}
-                    style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", cursor:"pointer", fontSize:13, color:"#333" }}
-                    onMouseEnter={(e)=>e.currentTarget.style.background=accentAlpha(accent,0.08)}
-                    onMouseLeave={(e)=>e.currentTarget.style.background="transparent"}
-                  >
-                    <span style={{ color:"#bbb", fontSize:12 }}>🕘</span>
-                    <span style={{ flex:1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{kw}</span>
+                <div data-testid="fixed-terms-section" style={{ padding:"8px 12px", borderBottom:"1px solid #f0ece8" }}>
+                  <div style={{ fontSize:11, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:8 }}>Fixed terms</div>
+                  {fixedTerms.length > 0 && (
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
+                      {fixedTerms.map((term)=>(
+                        <span
+                          key={term}
+                          style={{ display:"inline-flex", alignItems:"center", gap:6, minHeight:26, padding:"0 8px", background:accentAlpha(accent,0.08), color:accent, border:`1px solid ${accentAlpha(accent,0.22)}`, borderRadius:999, fontSize:12, fontWeight:500, cursor:"pointer", fontFamily:"inherit" }}
+                        >
+                          <button
+                            type="button"
+                            data-testid="fixed-term-chip"
+                            onClick={()=>appendFixedTerm(term)}
+                            style={{ background:"transparent", border:"none", color:"inherit", fontSize:12, fontWeight:500, cursor:"pointer", padding:0, fontFamily:"inherit" }}
+                          >{term}</button>
+                          <button
+                            type="button"
+                            data-testid="fixed-term-delete"
+                            title="Remove fixed term"
+                            onMouseDown={(e)=>e.preventDefault()}
+                            onClick={()=>removeFixedTerm(term)}
+                            style={{ background:"transparent", border:"none", color:"#999", fontSize:14, lineHeight:1, padding:"0 2px", cursor:"pointer", fontFamily:"inherit" }}
+                          >✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display:"flex", gap:6 }}>
+                    <input
+                      data-testid="fixed-term-input"
+                      value={fixedInput}
+                      onChange={e=>setFixedInput(e.target.value)}
+                      onKeyDown={(e)=>{ if (e.key === "Enter") addFixedTerm(); }}
+                      placeholder="Add fixed term"
+                      style={{ flex:1, height:28, padding:"0 8px", border:"1px solid #e0dbd6", borderRadius:6, fontSize:12, outline:"none", fontFamily:"inherit" }}
+                    />
                     <button
-                      onClick={(e)=>{ e.stopPropagation(); removeRecent(kw); }}
-                      title="Remove"
-                      style={{ background:"transparent", border:"none", color:"#bbb", fontSize:14, lineHeight:1, cursor:"pointer", padding:"2px 4px", borderRadius:4, fontFamily:"inherit" }}
-                      onMouseEnter={(e)=>{ e.currentTarget.style.color="#666"; }}
-                      onMouseLeave={(e)=>{ e.currentTarget.style.color="#bbb"; }}
-                    >✕</button>
+                      data-testid="fixed-term-add"
+                      onClick={addFixedTerm}
+                      style={{ height:28, padding:"0 10px", border:`1px solid ${accentAlpha(accent,0.35)}`, borderRadius:6, background:"#fff", color:accent, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
+                    >Add</button>
                   </div>
-                ))}
+                </div>
+                {recent.length > 0 && (
+                  <div data-testid="recent-searches-section">
+                    <div style={{ padding:"8px 12px 4px", fontSize:11, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <span>Recent searches</span>
+                      <button
+                        onClick={()=>{ persistRecent([]); setHistoryOpen(false); }}
+                        style={{ background:"transparent", border:"none", color:"#aaa", fontSize:11, cursor:"pointer", padding:0, fontFamily:"inherit" }}
+                      >Clear all</button>
+                    </div>
+                    {recent.map((kw)=>(
+                      <div
+                        key={kw}
+                        onClick={()=>{ setKeyword(kw); runSearch(kw); }}
+                        style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", cursor:"pointer", fontSize:13, color:"#333" }}
+                        onMouseEnter={(e)=>e.currentTarget.style.background=accentAlpha(accent,0.08)}
+                        onMouseLeave={(e)=>e.currentTarget.style.background="transparent"}
+                      >
+                        <span style={{ color:"#bbb", fontSize:12 }}>🕘</span>
+                        <span style={{ flex:1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{kw}</span>
+                        <button
+                          onClick={(e)=>{ e.stopPropagation(); removeRecent(kw); }}
+                          title="Remove"
+                          style={{ background:"transparent", border:"none", color:"#bbb", fontSize:14, lineHeight:1, cursor:"pointer", padding:"2px 4px", borderRadius:4, fontFamily:"inherit" }}
+                          onMouseEnter={(e)=>{ e.currentTarget.style.color="#666"; }}
+                          onMouseLeave={(e)=>{ e.currentTarget.style.color="#bbb"; }}
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

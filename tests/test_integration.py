@@ -25,6 +25,15 @@ class WebAppIntegrationTests(unittest.TestCase):
             self.assertEqual(data["items"][0]["id"], "m1")
             fake_client.search_titles.assert_called_once_with("nikke", top_n=7)
 
+    def test_api_search_defaults_to_30_items(self):
+        fake_client = MagicMock()
+        fake_client.search_titles.return_value = [{"id": "m1", "title": "t1", "price": 100}]
+
+        with patch.object(webapp, "_search_client", fake_client):
+            resp = self.client.get("/api/search?keyword=nikke")
+            self.assertEqual(resp.status_code, 200)
+            fake_client.search_titles.assert_called_once_with("nikke", top_n=30)
+
     def test_api_search_empty_keyword_returns_empty_items(self):
         resp = self.client.get("/api/search?keyword=")
         self.assertEqual(resp.status_code, 200)

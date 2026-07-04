@@ -30,5 +30,14 @@
     return value.filter(function (x) { return typeof x === "string"; }).slice(0, max);
   }
 
-  return { add: add, remove: remove, sanitize: sanitize };
+  function appendToken(text, token) {
+    const base = typeof text === "string" ? text.trim().replace(/\s+/g, " ") : "";
+    const v = typeof token === "string" ? token.trim() : "";
+    if (!v) return base;
+    const parts = base ? base.split(/\s+/) : [];
+    if (parts.indexOf(v) !== -1) return base;
+    return parts.concat([v]).join(" ");
+  }
+
+  return { add: add, remove: remove, sanitize: sanitize, appendToken: appendToken };
 }));

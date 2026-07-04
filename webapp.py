@@ -9,7 +9,7 @@ Mirrors `gui.py` but in the browser. The frontend is the design from
 `Mercari Agent.html` (React via CDN + Babel-in-the-browser), wired to
 two JSON endpoints backed by `MercariApiClient`:
 
-    GET /api/search?keyword=...&top_n=10  -> {"items": [{id, title, price}]}
+    GET /api/search?keyword=...&top_n=30  -> {"items": [{id, title, price}]}
     GET /api/details?ids=a,b,c            -> {"items": [{id, title, price, url, description}]}
 """
 
@@ -45,9 +45,9 @@ def api_search():
     if not keyword:
         return jsonify({"items": []})
     try:
-        top_n = max(1, min(50, int(request.args.get("top_n", 10))))
+        top_n = max(1, min(50, int(request.args.get("top_n", 30))))
     except (TypeError, ValueError):
-        top_n = 10
+        top_n = 30
 
     try:
         items: List[Dict[str, Any]] = _search_client.search_titles(keyword, top_n=top_n)
